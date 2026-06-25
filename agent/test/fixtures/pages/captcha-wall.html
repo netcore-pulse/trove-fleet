@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>CAPTCHA-Walled Signup Fixture — Brand</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; }
+    header, footer { padding: 24px; }
+    footer { background: #fafafa; }
+    .cf-turnstile {
+      display: inline-block; width: 300px; height: 65px; border: 1px solid #ccc;
+      background: #f9f9f9; text-align: center; line-height: 65px; color: #555;
+    }
+    input { padding: 8px; font-size: 16px; width: 240px; }
+    button { padding: 8px 14px; font-size: 16px; }
+  </style>
+</head>
+<body>
+  <header><h1>Brand</h1></header>
+
+  <footer>
+    <!-- A newsletter form that exists BUT is gated by a Cloudflare Turnstile
+         widget. The loop must DETECT the anti-bot wall and park (needs_solver),
+         NOT attempt to solve it — even though an email field is present. -->
+    <form class="newsletter-form" action="/newsletter/subscribe" method="post">
+      <h3>Subscribe to our newsletter</h3>
+      <input type="email" name="email" id="nl-email" placeholder="Email" autocomplete="email" aria-label="Email" />
+      <!-- Faux Cloudflare Turnstile widget (real class + data-sitekey signature). -->
+      <div class="cf-turnstile" data-sitekey="0x4AAAAAAA_fake_sitekey"></div>
+      <p>Please verify you are human before subscribing.</p>
+      <button type="submit">Subscribe</button>
+    </form>
+    <!-- Also include a faux hCaptcha iframe to exercise that signature too. -->
+    <iframe src="https://hcaptcha.com/captcha/v1/fake" title="widget containing checkbox for hCaptcha security challenge" style="display:none"></iframe>
+  </footer>
+
+  <script>
+    document.querySelector('form.newsletter-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      // A real wall would block submission until the challenge passes.
+      document.body.insertAdjacentHTML('beforeend', '<p>Please complete the captcha.</p>');
+    });
+  </script>
+</body>
+</html>

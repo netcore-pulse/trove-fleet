@@ -1,0 +1,31 @@
+From: Brand <hello@news.brand.com>
+To: brand.nonce1@in.trove.dev
+Subject: Please confirm your subscription
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="kl-boundary-9f"
+
+--kl-boundary-9f
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: 7bit
+
+Almost there! Confirm your subscription to Brand by visiting:
+https://manage.kmail-lists.com/subscriptions/confirm?a=ABC123&c=99&e=brand.nonce1%40in.trove.dev
+
+If you did not sign up, ignore this email.
+
+--kl-boundary-9f
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+<html><body>
+<h1>Almost there!</h1>
+<p>Tap the button to confirm your subscription to Brand.</p>
+<a href=3D"https://manage.kmail-lists.com/subscriptions/confirm?a=3DABC123&=
+c=3D99&e=3Dbrand.nonce1%40in.trove.dev" style=3D"color:#fff">Confirm subscr=
+iption</a>
+<p style=3D"font-size:11px">No longer want these emails?
+<a href=3D"https://manage.kmail-lists.com/subscriptions/unsubscribe?a=3DABC=
+123">Unsubscribe</a></p>
+</body></html>
+
+--kl-boundary-9f--

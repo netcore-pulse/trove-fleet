@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Modal Popup Signup Fixture — Brand</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; }
+    header, main { padding: 24px; }
+    /* Cookie banner sits ABOVE the popup; must be dismissed first. */
+    #gdpr-bar {
+      position: fixed; top: 0; left: 0; right: 0; background: #003; color: #fff;
+      padding: 14px; z-index: 11000; display: flex; gap: 12px; align-items: center;
+    }
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 10000;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .modal {
+      background: #fff; padding: 28px; max-width: 440px; border-radius: 6px; position: relative;
+    }
+    .modal-dismiss { position: absolute; top: 8px; right: 10px; border: 0; background: none; font-size: 20px; cursor: pointer; }
+    input { padding: 8px; font-size: 16px; width: 240px; }
+    button[type="submit"] { padding: 8px 14px; font-size: 16px; }
+  </style>
+</head>
+<body>
+  <!-- Cookie consent: must be accepted/dismissed before the modal is reachable. -->
+  <div id="gdpr-bar" role="region" aria-label="cookie notice">
+    <span>This site uses cookies.</span>
+    <button type="button" id="gdpr-accept">I Agree</button>
+  </div>
+
+  <header><h1>Brand</h1></header>
+  <main><h2>New season is live</h2></main>
+
+  <!-- Marketing popup modal newsletter signup. -->
+  <div class="modal-overlay" id="signup-modal" role="dialog" aria-modal="true" aria-label="newsletter signup">
+    <div class="modal popup-content">
+      <button type="button" class="modal-dismiss" aria-label="Close">×</button>
+      <form class="signup-form" id="popup-signup">
+        <h3>Get 20% off your first order</h3>
+        <p>Sign up for our newsletter.</p>
+        <input
+          type="email"
+          name="email_address"
+          id="popup-email"
+          placeholder="Email address"
+          autocomplete="email"
+          aria-label="Email address"
+        />
+        <button type="submit">Sign Up</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('gdpr-accept').addEventListener('click', function () {
+      document.getElementById('gdpr-bar').remove();
+    });
+    document.querySelector('.modal-dismiss').addEventListener('click', function () {
+      document.getElementById('signup-modal').style.display = 'none';
+    });
+    document.querySelector('form.signup-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var email = this.querySelector("input[type='email']").value || '';
+      if (!/.+@.+\..+/.test(email)) {
+        this.insertAdjacentHTML('beforeend', '<span role="alert" class="error">Enter a valid email address.</span>');
+        return;
+      }
+      this.outerHTML = '<p>One more step! We\'ve sent you a confirmation email — please confirm your subscription.</p>';
+    });
+  </script>
+</body>
+</html>

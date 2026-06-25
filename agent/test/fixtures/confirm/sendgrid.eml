@@ -1,0 +1,26 @@
+From: Brand <hello@e.brand.com>
+To: brand.nonce5@in.trove.dev
+Subject: Confirm your subscription to Brand
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="sg_b=_2026"
+
+--sg_b=_2026
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+Confirm your subscription:
+https://ct.sendgrid.net/wf/confirm?upn=3Dq1w2e3r4t5y6&list=3Dbrand
+
+Don't want these? https://ct.sendgrid.net/wf/unsubscribe?upn=3Dq1w2e3r4
+
+--sg_b=_2026
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: 7bit
+
+<html><body>
+  <p>Welcome aboard. Confirm your subscription below.</p>
+  <a href="https://ct.sendgrid.net/wf/confirm?upn=q1w2e3r4t5y6&list=brand">Confirm my subscription</a>
+  <p style="font-size:9px"><a href="https://ct.sendgrid.net/wf/unsubscribe?upn=q1w2e3r4">Unsubscribe</a></p>
+</body></html>
+
+--sg_b=_2026--

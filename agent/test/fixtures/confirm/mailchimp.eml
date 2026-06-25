@@ -1,0 +1,26 @@
+From: Brand Newsletter <no-reply@brand.us1.list-manage.com>
+To: brand.nonce2@in.trove.dev
+Subject: Brand: Please Confirm Subscription
+MIME-Version: 1.0
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: 7bit
+
+<html>
+<head><title>Confirm your subscription</title></head>
+<body>
+  <p>We need to confirm your email address.</p>
+  <p>To complete the subscription process,
+     please click the link below:</p>
+  <p>
+    <a href="https://brand.us1.list-manage.com/subscribe/confirm?u=abc123def&id=99887766&e=ffee00">
+      Yes, subscribe me to this list
+    </a>
+  </p>
+  <p>If you received this email by mistake, simply delete it.</p>
+  <hr>
+  <p style="font-size:10px">
+    <a href="https://brand.com/products/featured-hoodie">Shop the new collection</a> |
+    <a href="https://brand.us1.list-manage.com/unsubscribe?u=abc123def&id=99887766">unsubscribe from this list</a>
+  </p>
+</body>
+</html>

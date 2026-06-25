@@ -1,0 +1,33 @@
+{
+  "name": "@trove/subscriber-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Trove Subscriber Agent — autonomous headless-browser fleet that subscribes to brand newsletters and closes the double-opt-in loop. A0 = the durable spine (target store, state machine, seed ingest, persona pool, archive clients).",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "agent": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "agent": "node --env-file-if-exists=.env --experimental-strip-types src/cli/index.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "node-html-parser": "^7.1.0",
+    "playwright": "^1.50.1",
+    "tldts": "^6.1.71"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.13.1",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

@@ -1,0 +1,94 @@
+name: subscribe
+
+# Parallel Shopify-newsletter subscribe fleet on GitHub Actions runners.
+# Each shard runs on its own runner (a distinct egress IP), subscribes to a
+# DISJOINT slice of seed/shopify-seed.csv, and reports minted addresses to the
+# shared Trove archive (dedup by recipient). Datacenter runner IPs are fine for
+# the easy-picking majority (footer / Klaviyo signups); hard bot-walls are
+# detected once and skipped (needs_solver), never fought.
+#
+# Owner-triggered only (workflow_dispatch) so the archive token is never exposed
+# to forks/PRs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: "Parallel shards (= concurrent runner IPs)"
+        default: "8"
+      limit:
+        description: "Max targets per shard this run"
+        default: "40"
+      offset:
+        description: "Skip the first N seed domains (page through the list across runs)"
+        default: "0"
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        run: |
+          n=${{ github.event.inputs.shards }}
+          echo "matrix={\"shard\":$(seq 0 $((n-1)) | jq -cs .)}" >> "$GITHUB_OUTPUT"
+
+  subscribe:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    env:
+      TROVE_ARCHIVE_URL: ${{ vars.TROVE_ARCHIVE_URL }}
+      TROVE_INTERNAL_API_TOKEN: ${{ secrets.TROVE_INTERNAL_API_TOKEN }}
+      TROVE_WORKER_ID: gha-${{ github.run_id }}-${{ matrix.shard }}
+      TROVE_POPUP_SETTLE_MS: "1200"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - run: npm ci
+        working-directory: agent
+      - run: npx playwright install --with-deps chromium
+        working-directory: agent
+      - name: Build this shard's seed slice
+        run: |
+          shards=${{ github.event.inputs.shards }}
+          shard=${{ matrix.shard }}
+          offset=${{ github.event.inputs.offset }}
+          tail -n +2 seed/shopify-seed.csv | tail -n +$((offset + 1)) \
+            | awk -v s="$shards" -v k="$shard" 'NR % s == k' > /tmp/shard.csv
+          echo "shard $shard -> $(wc -l < /tmp/shard.csv) domains"
+      - name: Seed + subscribe
+        working-directory: agent
+        run: |
+          node --experimental-strip-types src/cli/index.ts seed /tmp/shard.csv
+          node --experimental-strip-types src/cli/index.ts burst --limit ${{ github.event.inputs.limit }}
+
+  confirm:
+    needs: subscribe
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    env:
+      TROVE_ARCHIVE_URL: ${{ vars.TROVE_ARCHIVE_URL }}
+      TROVE_INTERNAL_API_TOKEN: ${{ secrets.TROVE_INTERNAL_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - run: npm ci
+        working-directory: agent
+      - name: Click double-opt-in confirm links
+        working-directory: agent
+        run: node --experimental-strip-types src/cli/index.ts confirm

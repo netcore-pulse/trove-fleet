@@ -1,0 +1,41 @@
+From: Brand <hello@news.brand.com>
+To: brand.nonce6@in.trove.dev
+Subject: Confirm your subscription (and check out our sale!)
+MIME-Version: 1.0
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: 7bit
+
+<html>
+<body>
+  <!-- A loud marketing header full of decoy CTAs the agent must NEVER click -->
+  <table role="presentation" width="100%">
+    <tr>
+      <td>
+        <a href="https://brand.com/">Brand Home</a> &nbsp;
+        <a href="https://brand.com/products/best-seller-sneaker">Shop best sellers</a> &nbsp;
+        <a href="https://brand.com/sale?utm=confirm-email">50% OFF SALE — confirm you want in!</a> &nbsp;
+        <a href="https://brand.com/cart/checkout">Checkout now</a>
+      </td>
+    </tr>
+
+    <!-- The ONE genuine confirmation link -->
+    <tr>
+      <td align="center" style="padding:24px">
+        <p>Before we can send you anything, please confirm your subscription:</p>
+        <a href="https://manage.kmail-lists.com/subscriptions/confirm?a=HOSTILE9&c=1&e=brand.nonce6%40in.trove.dev"
+           style="background:#000;color:#fff;padding:14px 28px">Confirm subscription</a>
+      </td>
+    </tr>
+
+    <!-- Footer: an unsubscribe link whose anchor text deceptively says "confirm" -->
+    <tr>
+      <td style="font-size:10px;color:#999">
+        <a href="https://brand.com/products/limited-drop">Confirm you've seen the limited drop</a><br>
+        <a href="https://manage.kmail-lists.com/subscriptions/unsubscribe?a=HOSTILE9">Confirm unsubscribe / opt out</a><br>
+        <a href="https://brand.com/email/preferences">Manage your preferences</a><br>
+        <a href="mailto:support@brand.com?subject=confirm">Email support to confirm</a>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -1,0 +1,22 @@
+From: Brand <updates@send.brand.com>
+To: brand.nonce4@in.trove.dev
+Subject: One more step — verify your email
+MIME-Version: 1.0
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: 7bit
+
+<html>
+<body>
+  <table role="presentation" width="100%">
+    <tr><td align="center">
+      <p>Thanks for subscribing! Please verify your email address to opt-in.</p>
+      <a href="https://links.iterable.com/confirm/optin?token=it-7766aabb&listId=42"
+         style="background:#111;color:#fff;padding:12px 20px">Verify email</a>
+    </td></tr>
+    <tr><td align="center" style="font-size:11px;color:#888">
+      <a href="https://brand.com/blog/spring-lookbook">Read our spring lookbook</a><br>
+      <a href="https://links.iterable.com/optout?token=it-7766aabb">Opt out of all emails</a>
+    </td></tr>
+  </table>
+</body>
+</html>
