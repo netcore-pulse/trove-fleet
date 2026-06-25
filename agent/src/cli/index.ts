@@ -29,7 +29,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadConfig } from "../config.ts";
 import { TargetStore } from "../store.ts";
-import { canonicalizeDomain, parseSeedText } from "../canonical.ts";
+import { brandSlugFromDomain, canonicalizeDomain, parseSeedText } from "../canonical.ts";
 import { personaForDomain } from "../persona.ts";
 import { STATUSES, type Status } from "../state.ts";
 import { ArchiveClient } from "../archive-client.ts";
@@ -96,7 +96,7 @@ function usage(): string {
   ].join("\n");
 }
 
-function cmdSeed(file: string | undefined): number {
+async function cmdSeed(file: string | undefined, skipSubscribed = false): Promise<number> {
   if (!file) {
     process.stderr.write("error: `agent seed` requires a <file> path\n");
     return 2;
@@ -104,7 +104,23 @@ function cmdSeed(file: string | undefined): number {
   const cfg = loadConfig();
   const path = resolve(file);
   const text = readFileSync(path, "utf8");
-  const rows = parseSeedText(text);
+  let rows = parseSeedText(text);
+
+  // `--skip-subscribed`: drop brands the archive already has an active/pending
+  // address for (ephemeral fleet runner stores can't dedup across runs). Defensive:
+  // if the archive lacks the endpoint, the set is empty and nothing is skipped.
+  let skippedSubscribed = 0;
+  if (skipSubscribed) {
+    const done = await new ArchiveClient(cfg).subscribedSlugs();
+    if (done.size > 0) {
+      const before = rows.length;
+      rows = rows.filter((row) => {
+        const c = canonicalizeDomain(row.domain);
+        return !c || !done.has(brandSlugFromDomain(c));
+      });
+      skippedSubscribed = before - rows.length;
+    }
+  }
 
   const store = new TargetStore(cfg.dbPath);
   try {
@@ -112,6 +128,7 @@ function cmdSeed(file: string | undefined): number {
     process.stdout.write(
       [
         `Seed loaded from ${path}`,
+        ...(skipSubscribed ? [`  skipped (already subscribed): ${skippedSubscribed}`] : []),
         `  parsed:   ${r.parsed}`,
         `  invalid:  ${r.invalid}  (no registrable domain)`,
         `  distinct: ${r.distinct}  (after canonicalization)`,
@@ -457,7 +474,7 @@ export function run(argv: string[]): number | Promise<number> {
   const [cmd, ...rest] = argv;
   switch (cmd) {
     case "seed":
-      return cmdSeed(rest[0]);
+      return cmdSeed(rest[0], rest.includes("--skip-subscribed"));
     case "stats":
       return cmdStats();
     case "persona":

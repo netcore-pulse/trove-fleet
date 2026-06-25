@@ -113,6 +113,26 @@ export class ArchiveClient {
   }
 
   /**
+   * GET /internal/subscribed → the set of brand slugs that already have an active
+   * or pending_confirm address (already subscribed). Used to skip re-subscribing
+   * across ephemeral fleet runs. Defensive: returns an empty set on any failure
+   * (incl. an older archive without the endpoint), so seeding proceeds normally.
+   */
+  async subscribedSlugs(): Promise<Set<string>> {
+    try {
+      const res = await this.fetchImpl(`${this.baseUrl}/internal/subscribed`, {
+        method: "GET",
+        headers: this.authHeaders(),
+      });
+      if (res.status !== 200) return new Set();
+      const body = (await res.json()) as { slugs?: string[] };
+      return new Set((body.slugs ?? []).map((s) => s.toLowerCase()));
+    } catch {
+      return new Set();
+    }
+  }
+
+  /**
    * Poll the confirmations queue, claiming a batch under `workerId`'s lease.
    * GET /internal/confirmations?status=pending&worker_id=<id>&limit=<n>
    * → 200 ConfirmationResponse[]

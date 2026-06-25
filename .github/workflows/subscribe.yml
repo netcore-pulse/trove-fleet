@@ -78,7 +78,7 @@ jobs:
       - name: Seed + subscribe
         working-directory: agent
         run: |
-          node --experimental-strip-types src/cli/index.ts seed /tmp/shard.csv
+          node --experimental-strip-types src/cli/index.ts seed /tmp/shard.csv --skip-subscribed
           node --experimental-strip-types src/cli/index.ts burst --limit ${{ github.event.inputs.limit }}
 
   confirm:
@@ -88,6 +88,9 @@ jobs:
     env:
       TROVE_ARCHIVE_URL: ${{ vars.TROVE_ARCHIVE_URL }}
       TROVE_INTERNAL_API_TOKEN: ${{ secrets.TROVE_INTERNAL_API_TOKEN }}
+      # Drive confirm links in a real browser — many double-opt-in links need JS/cookies
+      # to register; the plain-GET clicker missed them.
+      TROVE_CONFIRM_BROWSER: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -97,6 +100,8 @@ jobs:
           cache-dependency-path: agent/package-lock.json
       - run: npm ci
         working-directory: agent
-      - name: Click double-opt-in confirm links
+      - run: npx playwright install --with-deps chromium
+        working-directory: agent
+      - name: Click double-opt-in confirm links (browser)
         working-directory: agent
         run: node --experimental-strip-types src/cli/index.ts confirm
