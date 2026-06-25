@@ -59,14 +59,18 @@ jobs:
         working-directory: agent
       - run: npx playwright install --with-deps chromium
         working-directory: agent
-      - name: Build this shard's seed slice
+      - name: Build this shard's seed slice (contiguous — page the front)
         run: |
-          shards=${{ github.event.inputs.shards }}
           shard=${{ matrix.shard }}
+          limit=${{ github.event.inputs.limit }}
           offset=${{ github.event.inputs.offset }}
-          tail -n +2 seed/shopify-seed.csv | tail -n +$((offset + 1)) \
-            | awk -v s="$shards" -v k="$shard" 'NR % s == k' > /tmp/shard.csv
-          echo "shard $shard -> $(wc -l < /tmp/shard.csv) domains"
+          start=$((offset + shard * limit))
+          # Contiguous block per shard: shard k gets rows [start, start+limit).
+          # With offset=0 the shards collectively cover the FRONT of the seed
+          # (recognizable / Klaviyo-heavy brands). Page on by offset += shards*limit.
+          tail -n +2 seed/shopify-seed.csv \
+            | awk -v a="$start" -v l="$limit" 'NR > a && NR <= a + l' > /tmp/shard.csv
+          echo "shard $shard -> seed rows $((start + 1))..$((start + limit)) ($(wc -l < /tmp/shard.csv) domains)"
       - name: Seed + subscribe
         working-directory: agent
         run: |
