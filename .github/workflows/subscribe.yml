@@ -22,6 +22,9 @@ on:
       offset:
         description: "Skip the first N seed domains (page through the list across runs)"
         default: "0"
+      seed:
+        description: "Seed file to draw from"
+        default: "seed/shopify-seed.csv"
 
 permissions:
   contents: read
@@ -64,11 +67,12 @@ jobs:
           shard=${{ matrix.shard }}
           limit=${{ github.event.inputs.limit }}
           offset=${{ github.event.inputs.offset }}
+          seed='${{ github.event.inputs.seed }}'
           start=$((offset + shard * limit))
           # Contiguous block per shard: shard k gets rows [start, start+limit).
-          # With offset=0 the shards collectively cover the FRONT of the seed
-          # (recognizable / Klaviyo-heavy brands). Page on by offset += shards*limit.
-          tail -n +2 seed/shopify-seed.csv \
+          # With offset=0 the shards collectively cover the FRONT of the chosen seed.
+          # Page on by offset += shards*limit.
+          tail -n +2 "$seed" \
             | awk -v a="$start" -v l="$limit" 'NR > a && NR <= a + l' > /tmp/shard.csv
           echo "shard $shard -> seed rows $((start + 1))..$((start + limit)) ($(wc -l < /tmp/shard.csv) domains)"
       - name: Seed + subscribe
