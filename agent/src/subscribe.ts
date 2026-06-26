@@ -221,6 +221,26 @@ export async function subscribeOnPage(
   const minted = await mint(brand, personaHandle(persona));
   const address = minted.address;
 
+  // Ground-truth success signal: watch the ESP's subscribe-request RESPONSE. Page-copy
+  // heuristics are unreliable — popups close on success with no persistent "check your
+  // email" text (→ a real 2xx looks like `unknown` → needs_attention), and a silently
+  // dropped submit looks identical to one the server 403'd. The network verdict is
+  // authoritative: a 2xx on a subscribe endpoint = submitted; 401/403/429 = a bot wall.
+  // Scoped to real subscribe endpoints (NOT analytics pings like /onsite/track-analytics).
+  const SUBSCRIBE_RE =
+    /\/client\/subscriptions|kmail-lists\.com\/ajax\/subscriptions|list-manage\.com\/subscribe|omnisend\.com\/.*subscri|attentivemobile\.com\/.*(subscri|signup)|sendlane\.com\/.*subscri|\/forms\/[^/]+\/submit|\/subscribe(?:\b|\/|\?)/i;
+  let netVerdict: "success" | "blocked" | null = null;
+  page.on("response", (resp) => {
+    try {
+      if (!SUBSCRIBE_RE.test(resp.url())) return;
+      const s = resp.status();
+      if (s >= 200 && s < 300) netVerdict = "success";
+      else if (s === 401 || s === 403 || s === 429) netVerdict = netVerdict ?? "blocked";
+    } catch {
+      /* never let an observer break the attempt */
+    }
+  });
+
   // Two submit attempts max: a validation error gets ONE corrected retry.
   let lastOutcome: Outcome = "unknown";
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -229,9 +249,34 @@ export async function subscribeOnPage(
     await fillSiblings(page, pick.siblings, persona);
     await tickRequiredConsent(page, pick.candidate.id);
 
-    // 4. Submit + settle, then classify.
+    // 4. Submit + settle. Give the subscribe XHR a beat to land before we judge.
     await submitForm(page, pick.candidate.id);
     await page.waitForTimeout(600);
+    if (netVerdict === null) await page.waitForTimeout(1_200);
+
+    // Network verdict wins when we have it (authoritative over page copy).
+    if (netVerdict === "success") {
+      return {
+        status: "submitted",
+        reason: "subscribe request acknowledged (2xx)",
+        esp: pick.esp,
+        address,
+        addressId: minted.id,
+        outcome: "success",
+        attempts: attempt,
+      };
+    }
+    if (netVerdict === "blocked") {
+      return {
+        status: "needs_solver",
+        reason: "subscribe request blocked (bot wall: 401/403/429)",
+        esp: pick.esp,
+        address,
+        addressId: minted.id,
+        outcome: "captcha",
+        attempts: attempt,
+      };
+    }
 
     const snap = await page.evaluate(pageSnapshot, pick.candidate.id).catch(() => ({
       bodyText: "",
@@ -280,11 +325,21 @@ export async function subscribeOnPage(
 
 async function fillEmail(page: Page, fieldId: string, address: string): Promise<void> {
   const sel = `[data-trove-fc='${fieldId}']`;
-  await page.fill(sel, address, { timeout: 5_000 }).catch(async () => {
-    // Some inputs reject .fill (custom widgets) — fall back to type.
-    await page.click(sel, { timeout: 3_000 }).catch(() => {});
-    await page.type(sel, address, { timeout: 3_000 }).catch(() => {});
-  });
+  const loc = page.locator(sel);
+  // Real keystrokes first. React-controlled inputs (Klaviyo & most modern ESP popups)
+  // IGNORE a programmatic value set (page.fill): React's own value setter shadows it, so
+  // the component's state stays empty and the submit handler silently no-ops — no
+  // subscription request fires, the field persists → needs_attention. pressSequentially
+  // dispatches trusted per-key events React honors. Plain inputs accept this fine too.
+  // (Measured: a store that no-opped under page.fill POSTed /subscribe → 200 under typing.)
+  try {
+    await loc.click({ timeout: 3_000 });
+    await loc.fill("", { timeout: 2_000 }).catch(() => {}); // clear any prefill
+    await loc.pressSequentially(address, { delay: 12, timeout: 8_000 });
+  } catch {
+    // Custom widget that rejects focus/typing → fall back to a plain value set.
+    await page.fill(sel, address, { timeout: 5_000 }).catch(() => {});
+  }
 }
 
 async function fillSiblings(page: Page, siblings: FieldCandidate[], persona: Persona): Promise<void> {
@@ -334,10 +389,37 @@ async function submitForm(page: Page, fieldId: string): Promise<void> {
     .evaluate((fid: string) => {
       const field = document.querySelector(`[data-trove-fc='${fid}']`) as HTMLElement | null;
       const form = field ? field.closest("form") : null;
-      if (!form) return false;
-      const btn = form.querySelector(
-        "button[type='submit'], input[type='submit'], button:not([type])",
-      ) as HTMLElement | null;
+      // Scope: the form, else the enclosing ESP popup container (Klaviyo/Privy popups
+      // sometimes wrap the input in a div, not a <form>).
+      const container =
+        form ||
+        (field &&
+          (field.closest('[class*="klaviyo-form-"], [class*="needsclick"]') ||
+            field.closest("[role='dialog'], [class*='modal'], [class*='popup']"))) ||
+        null;
+      // 1) A native submit control.
+      let btn =
+        (form &&
+          (form.querySelector(
+            "button[type='submit'], input[type='submit'], button:not([type])",
+          ) as HTMLElement | null)) ||
+        null;
+      // 2) Else a submit-INTENT button in the container (Klaviyo & co. use JS-handled
+      //    buttons with no type='submit'). Pick the last intent-match, exclude close/dismiss.
+      if (!btn && container) {
+        const cands = Array.from(
+          container.querySelectorAll("button, input[type='submit'], [role='button']"),
+        ) as HTMLElement[];
+        const intent =
+          /subscribe|sign\s?up|join|notify|continue|submit|count me|claim|unlock|get\b|yes\b|→|›|»/i;
+        const close = /close|no thanks|dismiss|skip|cancel|maybe later|×|✕|✖/i;
+        const txt = (b: HTMLElement): string =>
+          `${b.textContent ?? ""} ${(b as HTMLInputElement).value ?? ""} ${b.getAttribute("aria-label") ?? ""}`;
+        btn =
+          cands.reverse().find((b) => intent.test(txt(b)) && !close.test(txt(b))) ||
+          cands.find((b) => !close.test(txt(b))) ||
+          null;
+      }
       if (btn) {
         btn.setAttribute("data-trove-submit", "1");
         return true;
