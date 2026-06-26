@@ -244,7 +244,17 @@ function tieBreakPreferred(challenger: FieldCandidate, incumbent: FieldCandidate
  * Exported as a function reference (not a string) — Playwright serializes it.
  */
 export function extractCandidates(): FieldCandidate[] {
-  const lc = (s: string | null | undefined): string => (s ?? "").toLowerCase().trim();
+  // Robust lower-case: most callers pass string|null, but `element.className` is an
+  // SVGAnimatedString (not a string) on SVG nodes — calling .toLowerCase() on it throws,
+  // which (swallowed by the caller's catch) silently dead-ends the store at no_form_found.
+  // Coerce: real string → use it; SVGAnimatedString → its baseVal; anything else → "".
+  const lc = (s: unknown): string => {
+    if (typeof s === "string") return s.toLowerCase().trim();
+    if (s && typeof s === "object" && typeof (s as { baseVal?: unknown }).baseVal === "string") {
+      return ((s as { baseVal: string }).baseVal).toLowerCase().trim();
+    }
+    return "";
+  };
 
   const FOOTER_SEL = "footer, [role='contentinfo'], [class*='footer'], [id*='footer']";
   const MODAL_SEL =
