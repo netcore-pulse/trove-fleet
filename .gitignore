@@ -3,3 +3,8 @@ data/
 dist/
 .env
 *.log
+
+# Keep the public runner minimal — never mirror tests/fixtures or diagnostics here.
+agent/test/
+kl-diag.*
+.github/workflows/kl-diag.yml
