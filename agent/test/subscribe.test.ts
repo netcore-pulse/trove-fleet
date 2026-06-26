@@ -85,6 +85,7 @@ describe("A1 gate — ESP + generic + modal fixtures resolve to submitted", () =
     { file: "privy.html", esp: "privy", label: "Privy modal (with a login decoy)" },
     { file: "generic-footer.html", esp: "generic", label: "generic DIY footer form (with a search decoy)" },
     { file: "modal-popup.html", esp: "generic", label: "popup modal (behind a cookie banner)" },
+    { file: "klaviyo-popup.html", esp: "klaviyo", label: "Klaviyo POPUP-ONLY (no form in initial DOM; ID discovered via localStorage.klaviyoOnsite, surfaced by openForm)" },
   ];
 
   for (const c of cases) {

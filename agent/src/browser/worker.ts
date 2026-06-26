@@ -35,30 +35,70 @@ const POPUP_SETTLE_MS = (() => {
 
 /**
  * Runs IN THE BROWSER (via page.evaluate): if Klaviyo is present, deterministically
- * open every `klaviyo-form-<id>` whose container is in the DOM, using Klaviyo's
- * documented onsite API `_klOnsite.push(['openForm', id])` — surfacing the popup
- * signup without waiting on its timer/scroll/exit-intent trigger. Returns how many
- * it opened. Must stay a standalone function (no closures) so it serializes.
+ * open every form the account has registered — using Klaviyo's documented onsite API
+ * `_klOnsite.push(['openForm', id])` — surfacing the signup without waiting on its
+ * timer/scroll/exit-intent trigger. Returns how many it opened. Must stay a standalone
+ * function (no closures) so it serializes into page.evaluate.
+ *
+ * Form-ID discovery uses two sources, because the DOM alone misses popup-only forms:
+ *   1. DOM: `klaviyo-form-<id>` class tokens — finds EMBEDS (their container is in the
+ *      initial HTML). Misses popups: their container isn't injected until triggered.
+ *   2. `localStorage.klaviyoOnsite` — klaviyo.js seeds this with EVERY registered form's
+ *      ID (embeds AND popups) at init, before any trigger fires and before injection.
+ *      This is the lever that surfaces the popup-only tail. (Verified cold-start on a
+ *      fresh isolated context: the popup ID is present at t=0 while the DOM has none.)
+ * Form IDs are 6-char alnum; the regexes exclude Klaviyo's component classes
+ * (`klaviyo-form-richtext|button|image|version-…`) which share the prefix.
  */
 function triggerKlaviyoForms(): number {
   try {
-    const w = window as unknown as { klaviyo?: unknown; _klOnsite?: unknown[] };
+    const w = window as unknown as {
+      klaviyo?: { openForm?: (id: string) => void };
+      _klOnsite?: unknown[];
+    };
     const hasKlaviyo =
       !!w.klaviyo ||
       Array.isArray(w._klOnsite) ||
-      !!document.querySelector('script[src*="static.klaviyo.com/onsite"]');
+      !!document.querySelector('script[src*="static.klaviyo.com/onsite"]') ||
+      !!localStorage.getItem("klaviyoOnsite");
     if (!hasKlaviyo) return 0;
+
+    const COMPONENT = /^(richtext|button|image|version)$/i;
     const ids = new Set<string>();
+
+    // Source 1 — DOM `klaviyo-form-<id>` classes (embeds).
     for (const el of Array.from(document.querySelectorAll('[class*="klaviyo-form-"]'))) {
       for (const cls of Array.from(el.classList)) {
-        const m = /^klaviyo-form-([A-Za-z0-9]+)$/.exec(cls);
-        if (m && m[1]) ids.add(m[1]);
+        const m = /^klaviyo-form-([A-Za-z0-9]{5,8})$/.exec(cls);
+        if (m && m[1] && !COMPONENT.test(m[1])) ids.add(m[1]);
       }
     }
+
+    // Source 2 — localStorage.klaviyoOnsite registry (popups + embeds). Walk every
+    // form-type bucket (modal/flyout/…) and collect both viewed + disabled form keys.
+    try {
+      const onsite = JSON.parse(localStorage.getItem("klaviyoOnsite") || "{}") as {
+        viewedForms?: Record<string, { viewedForms?: Record<string, unknown>; disabledForms?: Record<string, unknown> }>;
+      };
+      for (const bucket of Object.values(onsite.viewedForms ?? {})) {
+        for (const id of [
+          ...Object.keys(bucket?.viewedForms ?? {}),
+          ...Object.keys(bucket?.disabledForms ?? {}),
+        ]) {
+          if (/^[A-Za-z0-9]{5,8}$/.test(id) && !COMPONENT.test(id)) ids.add(id);
+        }
+      }
+    } catch {
+      /* malformed/absent registry — fall back to the DOM ids */
+    }
+
     if (!Array.isArray(w._klOnsite)) w._klOnsite = [];
     let n = 0;
     for (const id of ids) {
       try {
+        // openForm directly when the SDK is ready; the queue push is the fallback
+        // Klaviyo drains once klaviyo.js finishes loading.
+        w.klaviyo?.openForm?.(id);
         (w._klOnsite as unknown[]).push(["openForm", id]);
         n++;
       } catch {

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Klaviyo Popup-Only Fixture — Brand</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; }
+    header, main, footer { padding: 24px; }
+    footer { background: #111; color: #eee; }
+    .klaviyo-form { border: 1px solid #444; padding: 16px; max-width: 420px; }
+    input { padding: 8px; font-size: 16px; width: 220px; }
+    button { padding: 8px 14px; font-size: 16px; }
+    [role="dialog"] {
+      position: fixed; inset: 50% auto auto 50%; transform: translate(-50%, -50%);
+      background: #fff; color: #111; z-index: 9999;
+    }
+  </style>
+  <script>
+    // Models a POPUP-ONLY Klaviyo signup. The crux: there is NO email form in the
+    // initial DOM, and the popup container is NOT injected until its trigger fires.
+    // klaviyo.js, however, seeds its client-side form registry at init —
+    // localStorage.klaviyoOnsite holds EVERY registered form's ID (incl. popups)
+    // before any trigger. The agent must discover the popup's ID from there (the DOM
+    // can't surface it) and call openForm() to inject it. This is the regression
+    // fixture for that path (see triggerKlaviyoForms in src/browser/worker.ts).
+    try {
+      localStorage.setItem('klaviyoOnsite', JSON.stringify({
+        viewedForms: { modal: { viewedForms: { Kpop42: 1 }, disabledForms: {} } }
+      }));
+    } catch (e) { /* file:// localStorage may be unavailable; openForm stub still works */ }
+
+    // Stub the Klaviyo onsite API. openForm(id) injects the popup-only form on
+    // demand — exactly how the real SDK surfaces a popup that hasn't auto-triggered.
+    window._klOnsite = window._klOnsite || [];
+    window.klaviyo = window.klaviyo || {
+      openForm: function (id) {
+        if (id !== 'Kpop42') return;                              // only the registered popup exists
+        if (document.querySelector('.klaviyo-form-Kpop42')) return; // idempotent
+        document.body.insertAdjacentHTML('beforeend',
+          '<div class="klaviyo-form-Kpop42 klaviyo-form kl-private-reset-css-Xuajs1" role="dialog" aria-label="newsletter">' +
+            '<form class="klaviyo-form" novalidate>' +
+              '<h3>Get 10% off your first order</h3>' +
+              '<div class="kl_inputContainer">' +
+                '<input type="email" name="email" class="kl_field needsclick go2421913488" ' +
+                       'id="email_kl_Kpop42" placeholder="Email" autocomplete="email" aria-label="Email" />' +
+              '</div>' +
+              '<button type="submit" class="kl_submit go2421913489">Subscribe</button>' +
+            '</form>' +
+          '</div>');
+        document.querySelector('.klaviyo-form-Kpop42 form').addEventListener('submit', function (e) {
+          e.preventDefault();
+          var email = this.querySelector("input[type='email']").value || '';
+          if (!/.+@.+\..+/.test(email)) {
+            document.body.insertAdjacentHTML('beforeend',
+              '<div role="alert" class="error">Please enter a valid email address.</div>');
+            return;
+          }
+          this.outerHTML = '<p class="kl-success">Almost there! Please confirm your subscription — check your email.</p>';
+        });
+      }
+    };
+  </script>
+</head>
+<body>
+  <header>
+    <h1>Brand</h1>
+    <!-- Search decoy in the header. Must NOT be chosen. -->
+    <form role="search" class="site-search" action="/search">
+      <input type="search" name="q" placeholder="Search products" aria-label="Search" />
+      <button type="submit">Search</button>
+    </form>
+  </header>
+
+  <main>
+    <h2>Shop the new collection</h2>
+    <!-- NO newsletter form in the initial DOM — it is popup-only. -->
+  </main>
+
+  <footer>
+    <p>© Brand. No newsletter form is present in the static HTML.</p>
+  </footer>
+</body>
+</html>
