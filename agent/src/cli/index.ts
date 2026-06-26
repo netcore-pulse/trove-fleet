@@ -400,6 +400,16 @@ async function cmdBurst(rest: string[]): Promise<number> {
         "",
       ].join("\n"),
     );
+    // Bring back this pass's outcomes before the (often ephemeral) store is gone:
+    // post the funnel + per-ESP breakdown to the archive. Best-effort by design.
+    await client.reportFleetRun({
+      worker_id: process.env.TROVE_WORKER_ID ?? "local",
+      attempted: result.attempted,
+      errored: result.errored,
+      remaining_queued: result.remainingQueued,
+      by_status: result.byStatus,
+      by_esp: store.espFunnel(),
+    });
     return 0;
   } finally {
     store.close();

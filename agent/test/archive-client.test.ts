@@ -183,3 +183,43 @@ describe("ArchiveClient — base URL handling", () => {
     expect(calls[0]!.url).toBe("http://localhost:3033/internal/addresses");
   });
 });
+
+describe("ArchiveClient.reportFleetRun — POST /internal/fleet-report", () => {
+  const REPORT = {
+    worker_id: "gha-123-4",
+    attempted: 40,
+    errored: 1,
+    remaining_queued: 0,
+    by_status: { submitted: 12, no_form_found: 20, needs_solver: 7, queued: 1 },
+    by_esp: [
+      { esp: "klaviyo", submitted: 8, confirmed: 0 },
+      { esp: "mailchimp", submitted: 4, confirmed: 0 },
+    ],
+  };
+
+  it("posts the funnel + per-ESP breakdown with Bearer auth", async () => {
+    const { fetch, calls } = stubFetch(() => ({ status: 200, body: { ok: true } }));
+    const client = new ArchiveClient(CONFIG, fetch);
+    await client.reportFleetRun(REPORT);
+    expect(calls).toHaveLength(1);
+    const c = calls[0]!;
+    expect(c.method).toBe("POST");
+    expect(c.url).toBe("http://localhost:3033/internal/fleet-report");
+    expect(c.headers.Authorization).toBe("Bearer test-token");
+    expect(JSON.parse(c.body!)).toEqual(REPORT);
+  });
+
+  it("is best-effort: a non-2xx response never throws (the subscribes already happened)", async () => {
+    const { fetch } = stubFetch(() => ({ status: 500, body: { error: "boom" } }));
+    const client = new ArchiveClient(CONFIG, fetch);
+    await expect(client.reportFleetRun(REPORT)).resolves.toBeUndefined();
+  });
+
+  it("is best-effort: a thrown network error never throws", async () => {
+    const fetchImpl = (async () => {
+      throw new Error("network down");
+    }) as FetchLike;
+    const client = new ArchiveClient(CONFIG, fetchImpl);
+    await expect(client.reportFleetRun(REPORT)).resolves.toBeUndefined();
+  });
+});

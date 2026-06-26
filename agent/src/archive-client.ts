@@ -65,6 +65,20 @@ export interface BrandInput {
   category?: string | undefined;
 }
 
+/**
+ * A burst pass's outcomes, posted to the archive so they survive the ephemeral
+ * fleet runner. `by_status` is the funnel (submitted/no_form_found/needs_solver/…);
+ * `by_esp` is the per-ESP submitted/confirmed breakdown (where Klaviyo conversions show).
+ */
+export interface FleetRunReport {
+  worker_id: string;
+  attempted: number;
+  errored: number;
+  remaining_queued: number;
+  by_status: Record<string, number>;
+  by_esp: Array<{ esp: string; submitted: number; confirmed: number }>;
+}
+
 export type FetchLike = typeof fetch;
 
 export class ArchiveError extends Error {
@@ -110,6 +124,26 @@ export class ArchiveClient {
       body: JSON.stringify(persona ? { brand, persona } : { brand }),
     });
     return this.json<AddressResponse>(res, "mintAddress", [201]);
+  }
+
+  /**
+   * POST /internal/fleet-report — bring back this burst's outcomes before the
+   * ephemeral runner store is discarded. A fleet shard's local SQLite store (its
+   * funnel, per-ESP breakdown) is thrown away on teardown; without this, the
+   * archive only ever learns about emails that arrive, never which stores went
+   * submitted vs no_form vs walled. BEST-EFFORT: a failed report must never fail
+   * the run — the subscribes already happened — so all errors are swallowed.
+   */
+  async reportFleetRun(report: FleetRunReport): Promise<void> {
+    try {
+      await this.fetchImpl(`${this.baseUrl}/internal/fleet-report`, {
+        method: "POST",
+        headers: this.authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(report),
+      });
+    } catch {
+      /* best-effort: the run's value is the subscribes, not the report */
+    }
   }
 
   /**
