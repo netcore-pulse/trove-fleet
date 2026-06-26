@@ -34,63 +34,96 @@ const POPUP_SETTLE_MS = (() => {
 })();
 
 /**
+ * How long triggerKlaviyoForms polls for the Klaviyo SDK to become ready before
+ * giving up. klaviyo.js loads its bundles AFTER `load` and, in a headless /
+ * datacenter context, can take 7s+ to populate its form registry — far past the
+ * generic POPUP_SETTLE_MS. Measured: a real popup-only store populated at ~7.5s.
+ * Only Klaviyo-present pages pay this (we early-exit the moment a form id +
+ * a ready openForm() appear); env-tunable via `TROVE_KLAVIYO_WAIT_MS`.
+ */
+const KLAVIYO_WAIT_MS = (() => {
+  const v = Number(process.env.TROVE_KLAVIYO_WAIT_MS);
+  return Number.isFinite(v) && v >= 0 ? v : 9000;
+})();
+
+/**
  * Runs IN THE BROWSER (via page.evaluate): if Klaviyo is present, deterministically
  * open every form the account has registered — using Klaviyo's documented onsite API
  * `_klOnsite.push(['openForm', id])` — surfacing the signup without waiting on its
  * timer/scroll/exit-intent trigger. Returns how many it opened. Must stay a standalone
- * function (no closures) so it serializes into page.evaluate.
+ * function (no closures) so it serializes into page.evaluate. Takes `maxWaitMs`.
  *
  * Form-ID discovery uses two sources, because the DOM alone misses popup-only forms:
  *   1. DOM: `klaviyo-form-<id>` class tokens — finds EMBEDS (their container is in the
  *      initial HTML). Misses popups: their container isn't injected until triggered.
  *   2. `localStorage.klaviyoOnsite` — klaviyo.js seeds this with EVERY registered form's
  *      ID (embeds AND popups) at init, before any trigger fires and before injection.
- *      This is the lever that surfaces the popup-only tail. (Verified cold-start on a
- *      fresh isolated context: the popup ID is present at t=0 while the DOM has none.)
+ *      This is the lever that surfaces the popup-only tail.
  * Form IDs are 6-char alnum; the regexes exclude Klaviyo's component classes
  * (`klaviyo-form-richtext|button|image|version-…`) which share the prefix.
+ *
+ * CRITICAL — timing: klaviyo.js loads its bundles AFTER `load` and, headless/datacenter,
+ * can take 7s+ to populate the registry (measured ~7.5s on a real popup-only store). A
+ * single shot at provoke time fires into an EMPTY registry → 0 forms found → the store
+ * dead-ends at no_form_found (this is exactly what sank a 20-shard drain: 228/228 Klaviyo
+ * stores → no_form). So we POLL for readiness (SDK's openForm fn + ≥1 discoverable id)
+ * up to `maxWaitMs`, early-exiting the moment both appear, then openForm and let the
+ * injected popup render before the finder scans.
  */
-function triggerKlaviyoForms(): number {
+async function triggerKlaviyoForms(maxWaitMs: number): Promise<number> {
   try {
     const w = window as unknown as {
       klaviyo?: { openForm?: (id: string) => void };
       _klOnsite?: unknown[];
     };
-    const hasKlaviyo =
+    const klaviyoPresent = (): boolean =>
       !!w.klaviyo ||
       Array.isArray(w._klOnsite) ||
       !!document.querySelector('script[src*="static.klaviyo.com/onsite"]') ||
       !!localStorage.getItem("klaviyoOnsite");
-    if (!hasKlaviyo) return 0;
+    if (!klaviyoPresent()) return 0;
 
     const COMPONENT = /^(richtext|button|image|version)$/i;
-    const ids = new Set<string>();
-
-    // Source 1 — DOM `klaviyo-form-<id>` classes (embeds).
-    for (const el of Array.from(document.querySelectorAll('[class*="klaviyo-form-"]'))) {
-      for (const cls of Array.from(el.classList)) {
-        const m = /^klaviyo-form-([A-Za-z0-9]{5,8})$/.exec(cls);
-        if (m && m[1] && !COMPONENT.test(m[1])) ids.add(m[1]);
-      }
-    }
-
-    // Source 2 — localStorage.klaviyoOnsite registry (popups + embeds). Walk every
-    // form-type bucket (modal/flyout/…) and collect both viewed + disabled form keys.
-    try {
-      const onsite = JSON.parse(localStorage.getItem("klaviyoOnsite") || "{}") as {
-        viewedForms?: Record<string, { viewedForms?: Record<string, unknown>; disabledForms?: Record<string, unknown> }>;
-      };
-      for (const bucket of Object.values(onsite.viewedForms ?? {})) {
-        for (const id of [
-          ...Object.keys(bucket?.viewedForms ?? {}),
-          ...Object.keys(bucket?.disabledForms ?? {}),
-        ]) {
-          if (/^[A-Za-z0-9]{5,8}$/.test(id) && !COMPONENT.test(id)) ids.add(id);
+    const FORM_ID = /^[A-Za-z0-9]{5,8}$/;
+    // Collect form ids from both sources (DOM embeds + the localStorage registry).
+    const discover = (): Set<string> => {
+      const ids = new Set<string>();
+      for (const el of Array.from(document.querySelectorAll('[class*="klaviyo-form-"]'))) {
+        for (const cls of Array.from(el.classList)) {
+          const m = /^klaviyo-form-([A-Za-z0-9]{5,8})$/.exec(cls);
+          if (m && m[1] && !COMPONENT.test(m[1])) ids.add(m[1]);
         }
       }
-    } catch {
-      /* malformed/absent registry — fall back to the DOM ids */
+      try {
+        const onsite = JSON.parse(localStorage.getItem("klaviyoOnsite") || "{}") as {
+          viewedForms?: Record<string, { viewedForms?: Record<string, unknown>; disabledForms?: Record<string, unknown> }>;
+        };
+        for (const bucket of Object.values(onsite.viewedForms ?? {})) {
+          for (const id of [
+            ...Object.keys(bucket?.viewedForms ?? {}),
+            ...Object.keys(bucket?.disabledForms ?? {}),
+          ]) {
+            if (FORM_ID.test(id) && !COMPONENT.test(id)) ids.add(id);
+          }
+        }
+      } catch {
+        /* malformed/absent registry — fall back to the DOM ids */
+      }
+      return ids;
+    };
+
+    const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+    const deadline = performance.now() + (maxWaitMs > 0 ? maxWaitMs : 9000);
+    // Poll until the SDK can open forms AND we have at least one id, or we time out.
+    let ids = new Set<string>();
+    for (;;) {
+      const ready = typeof w.klaviyo?.openForm === "function";
+      ids = discover();
+      if (ready && ids.size > 0) break;
+      if (performance.now() >= deadline) break;
+      await sleep(300);
     }
+    if (ids.size === 0) return 0;
 
     if (!Array.isArray(w._klOnsite)) w._klOnsite = [];
     let n = 0;
@@ -105,6 +138,8 @@ function triggerKlaviyoForms(): number {
         /* a single bad id must not stop the rest */
       }
     }
+    // Let the injected popup hydrate + animate in before the finder scans the DOM.
+    await sleep(1500);
     return n;
   } catch {
     return 0;
@@ -239,11 +274,14 @@ export class BrowserWorker {
         })
         .catch(() => {});
       // Klaviyo (the dominant ESP, ~1/3 of stores, and the weakest segment for a
-      // static finder because its signup is a popup): deterministically OPEN any
-      // klaviyo-form-<id> whose container is in the DOM via the documented
+      // static finder because its signup is a popup): WAIT for the SDK to populate
+      // its form registry (headless/datacenter init is slow — ~7.5s observed), then
+      // deterministically OPEN every registered form via the documented
       // `_klOnsite.push(['openForm', id])` API — no waiting on its timer/exit-intent.
-      await page.evaluate(triggerKlaviyoForms).catch(() => {});
-      // Let the popup hydrate + animate in.
+      // The poll early-exits the instant a form id + ready openForm() appear, so only
+      // slow-loading Klaviyo pages pay the full budget; it renders the popup itself.
+      await page.evaluate(triggerKlaviyoForms, KLAVIYO_WAIT_MS).catch(() => {});
+      // Let any non-Klaviyo provoked popup (Privy/Justuno spin-to-win) hydrate.
       await page.waitForTimeout(POPUP_SETTLE_MS);
     } catch {
       // best-effort; never block the attempt
