@@ -10,6 +10,9 @@ parallelising newsletter subscription across the verified-Shopify seed list.
 - **`seed/shopify-seed.csv`** — the verified live-Shopify storefronts to subscribe to
   (`domain,url,brand_name,category,esp,source`).
 - **`.github/workflows/subscribe.yml`** — the sharded fleet.
+- **`scripts/precompute-embeddings.mjs`** + **`.github/workflows/precompute-embeddings.yml`** —
+  hourly semantic-search embedding job (MiniLM), mirrored from trove so it runs on this public
+  repo's free Actions minutes instead of trove's metered private quota.
 
 ## How it runs
 
