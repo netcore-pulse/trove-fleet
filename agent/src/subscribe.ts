@@ -42,6 +42,22 @@ import { BrowserWorker } from "./browser/worker.ts";
 /** Injected mint boundary — stubbed in tests, ArchiveClient.mintAddress in prod. */
 export type MintFn = (brand: BrandInput, personaHandle?: string) => Promise<AddressResponse>;
 
+/**
+ * Injected outcome boundary — ArchiveClient.reportOutcome in prod, stubbed in tests.
+ *
+ * We mint the address as soon as we FIND an email field, before we submit. So a bot wall, a
+ * rejected submit and a form that silently no-ops all leave the archive exactly the trace of a
+ * success: a brand row, an address, then nothing, then the 3-day revoke sweep. Reporting the
+ * resolved verdict here is what turns the archive's coverage question from an inference into a
+ * GROUP BY (synced from trove@0029_subscribe_outcome — see docs/AUTO-SUBSCRIBE-SUGGESTIONS-PLAN.md
+ * in the trove repo for why this landed alongside subscribe:suggestions rather than on its own).
+ */
+export type ReportOutcomeFn = (
+  addressId: number,
+  outcome: SubscribeOutcome["status"],
+  reason: string,
+) => Promise<void>;
+
 /** Slugified persona handle → the persona-flavored, brand-keyed mint (oliviasmith). */
 export function personaHandle(p: Persona): string {
   return (p.firstName + p.lastName).toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -50,6 +66,11 @@ export function personaHandle(p: Persona): string {
 export interface SubscribeOnPageOptions {
   /** Mint a fresh address for the target's brand. */
   mint: MintFn;
+  /**
+   * Report the resolved verdict against the minted address. Optional: omitted in the fixture
+   * tests, and an archive that predates the endpoint simply never hears about it.
+   */
+  reportOutcome?: ReportOutcomeFn | undefined;
   /** The synthetic persona for this target (A0, deterministic by domain). */
   persona: Persona;
   /** Registrable domain (for brand slug + diagnostics). */
@@ -221,6 +242,20 @@ export async function subscribeOnPage(
   const minted = await mint(brand, personaHandle(persona));
   const address = minted.address;
 
+  /**
+   * Report the verdict against the minted address, then return it. Every exit from here on
+   * carries an addressId, so every one of them goes through this — the archive should never
+   * learn a DIFFERENT verdict than the one the local run resolved to. BEST-EFFORT, like the fleet
+   * report: the value of a run is the subscribes, and a reporting failure must never turn a
+   * successful subscribe into an exception.
+   */
+  const settle = async (r: SubscribeOutcome): Promise<SubscribeOutcome> => {
+    if (opts.reportOutcome && r.addressId !== undefined) {
+      try { await opts.reportOutcome(r.addressId, r.status, r.reason); } catch { /* never fail the run */ }
+    }
+    return r;
+  };
+
   // Ground-truth success signal: watch the ESP's subscribe-request RESPONSE. Page-copy
   // heuristics are unreliable — popups close on success with no persistent "check your
   // email" text (→ a real 2xx looks like `unknown` → needs_attention), and a silently
@@ -256,7 +291,7 @@ export async function subscribeOnPage(
 
     // Network verdict wins when we have it (authoritative over page copy).
     if (netVerdict === "success") {
-      return {
+      return settle({
         status: "submitted",
         reason: "subscribe request acknowledged (2xx)",
         esp: pick.esp,
@@ -264,10 +299,10 @@ export async function subscribeOnPage(
         addressId: minted.id,
         outcome: "success",
         attempts: attempt,
-      };
+      });
     }
     if (netVerdict === "blocked") {
-      return {
+      return settle({
         status: "needs_solver",
         reason: "subscribe request blocked (bot wall: 401/403/429)",
         esp: pick.esp,
@@ -275,7 +310,7 @@ export async function subscribeOnPage(
         addressId: minted.id,
         outcome: "captcha",
         attempts: attempt,
-      };
+      });
     }
 
     const snap = await page.evaluate(pageSnapshot, pick.candidate.id).catch(() => ({
@@ -287,7 +322,7 @@ export async function subscribeOnPage(
     lastOutcome = classifyOutcome(snap);
 
     if (lastOutcome === "captcha") {
-      return {
+      return settle({
         status: "needs_solver",
         reason: "captcha/anti-bot wall detected (post-submit)",
         esp: pick.esp,
@@ -295,10 +330,10 @@ export async function subscribeOnPage(
         addressId: minted.id,
         outcome: lastOutcome,
         attempts: attempt,
-      };
+      });
     }
     if (lastOutcome === "success") {
-      return {
+      return settle({
         status: "submitted",
         reason: "submitted; confirmation expected",
         esp: pick.esp,
@@ -306,13 +341,13 @@ export async function subscribeOnPage(
         addressId: minted.id,
         outcome: lastOutcome,
         attempts: attempt,
-      };
+      });
     }
     // validation_error / unknown → retry once (attempt 1), else fall through.
   }
 
   // Still not successful after the retry → park for attention.
-  return {
+  return settle({
     status: "needs_attention",
     reason: `submit did not confirm after retry (last outcome: ${lastOutcome})`,
     esp: pick.esp,
@@ -320,7 +355,7 @@ export async function subscribeOnPage(
     addressId: minted.id,
     outcome: lastOutcome,
     attempts: 2,
-  };
+  });
 }
 
 async function fillEmail(page: Page, fieldId: string, address: string): Promise<void> {

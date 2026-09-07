@@ -19,12 +19,17 @@
  */
 
 import { BrowserWorker } from "../browser/worker.ts";
-import { subscribeOnPage, type MintFn } from "../subscribe.ts";
+import { subscribeOnPage, type MintFn, type ReportOutcomeFn } from "../subscribe.ts";
 import type { AttemptStep, AttemptResult } from "./pool.ts";
 
 export interface SubscribeStepOptions {
   /** Mint boundary (ArchiveClient.mintAddress in prod). */
   mint: MintFn;
+  /**
+   * Outcome boundary (ArchiveClient.reportOutcome in prod). Optional and passed straight
+   * through to subscribeOnPage — see subscribe.ts's ReportOutcomeFn doc for why this matters.
+   */
+  reportOutcome?: ReportOutcomeFn | undefined;
   /** Resolve a domain to its URL. Defaults to https://<domain>/. */
   urlForDomain?: (domain: string) => string;
   /** Run chromium headless (default true). */
@@ -52,6 +57,7 @@ export function makeSubscribeStep(opts: SubscribeStepOptions): AttemptStep {
       try {
         const result = await subscribeOnPage(page, {
           mint: opts.mint,
+          reportOutcome: opts.reportOutcome,
           persona: ctx.persona,
           domain: ctx.domain,
           brandName: ctx.row.brand_name ?? undefined,

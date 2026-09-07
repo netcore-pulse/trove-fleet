@@ -43,6 +43,8 @@ import { computeMetrics, formatMetrics } from "../observability/metrics.ts";
 import { evaluateAlerts, formatAlerts } from "../observability/alerts.ts";
 import { runBurst } from "../run/burst.ts";
 import { runMaintenance } from "../run/maintenance.ts";
+import { runFleet } from "../fleet/pool.ts";
+import { Throttle } from "../fleet/throttle.ts";
 
 function usage(): string {
   return [
@@ -77,6 +79,12 @@ function usage(): string {
     "  agent maintain [--limit N]",
     "                         A5 TRICKLE: release lapsed leases, re-queue parked rows",
     "                         + new seed, reconcile confirmations, drain a small budget.",
+    "  agent subscribe:suggestions [--limit N]",
+    "                         Auto-subscribe the public Suggest-a-brand queue (not seed/*.csv).",
+    "                         Fetches suggestions with status=new (default limit 10), runs each",
+    "                         through the same subscribe step as `burst`, and reports each",
+    "                         outcome back to its OWN suggestion row — a submit claims it the",
+    "                         same way a human's \"Claim & mint\" button does.",
     "  agent help             Show this help",
     "",
     "Env:",
@@ -417,6 +425,101 @@ async function cmdBurst(rest: string[]): Promise<number> {
 }
 
 /**
+ * `agent subscribe:suggestions` — the auto-subscribe agent's OWN seed list: the public
+ * Suggest-a-brand queue (GET /internal/suggestions?status=new), not seed/*.csv. Closes the gap
+ * documented in docs/AUTO-SUBSCRIBE-SUGGESTIONS-PLAN.md (trove repo) — until this command
+ * existed, a brand suggested through the public form was never attempted by the agent at all.
+ *
+ * Runs the exact same subscribe step `burst` uses; the only differences are where the domains
+ * come from, and that each attempt's outcome is reported back to the SPECIFIC suggestion row it
+ * came from (POST /internal/suggestions/:id/agent-outcome) — not just the funnel-wide fleet
+ * report `burst` sends. A 'submitted' outcome carries brand_slug + the minted address, which the
+ * archive uses to claim the suggestion exactly like a human's "Claim & mint" button.
+ *
+ * Deliberately small and frequent, not a drain: suggestions trickle in one at a time (default
+ * limit 10), meant to run on a schedule (see subscribe-suggestions.yml) against a short list,
+ * unlike `burst`'s thousands-strong seed backlog.
+ *
+ * NOT exercised by the offline test suite (drives real chromium + a real archive), same as
+ * `burst`/`subscribe`/`subscribe:live`.
+ */
+async function cmdSubscribeSuggestions(rest: string[]): Promise<number> {
+  const limit = parseLimitFlag(rest) ?? 10;
+  const cfg = loadConfig();
+  const client = new ArchiveClient(cfg);
+
+  const suggestions = await client.fetchSuggestions("new");
+  if (!suggestions.length) {
+    process.stdout.write("no new suggestions to attempt\n");
+    return 0;
+  }
+  const attempted = suggestions.slice(0, limit);
+
+  // The store only ever sees a bare domain; this is how the attempt step's onAttempt callback
+  // maps a result back to the specific suggestion row (not just the brand) it came from.
+  const byDomain = new Map<string, { id: number }>();
+  for (const s of attempted) {
+    const c = canonicalizeDomain(s.domain);
+    if (c) byDomain.set(c, { id: s.id });
+  }
+
+  const store = new TargetStore(cfg.dbPath);
+  const proxies = proxyPoolFromEnv(process.env);
+  const step = makeSubscribeStep({
+    mint: (brand, ph) => client.mintAddress(brand, ph),
+    reportOutcome: (id, outcome, reason) => client.reportOutcome(id, outcome, reason),
+  });
+
+  process.stdout.write(
+    [
+      "=== SUBSCRIBE:SUGGESTIONS (the Suggest-a-brand queue) ===",
+      `store=${cfg.dbPath} archive=${cfg.archiveUrl}`,
+      `new suggestions=${suggestions.length}  attempting this pass=${attempted.length}`,
+      "",
+    ].join("\n"),
+  );
+
+  try {
+    store.ingest(attempted.map((s) => ({ domain: s.domain })));
+
+    // Collected rather than awaited inside onAttempt: the pool's callback slot is
+    // fire-and-forget (sync), and the CLI entrypoint calls process.exit() right after this
+    // function returns — an un-awaited report could be cut off mid-flight.
+    const reports: Promise<void>[] = [];
+    const result = await runFleet({
+      store,
+      step,
+      throttle: new Throttle(throttleOptionsFromEnv(process.env)),
+      proxies,
+      limit: attempted.length,
+      onAttempt: (domain, r) => {
+        process.stdout.write(`  ${r.status.padEnd(16)} ${domain}\n`);
+        const sugg = byDomain.get(domain);
+        // "queued" here is a transient error/retry, not a terminal verdict — nothing to report
+        // yet; the next scheduled pass re-attempts it.
+        if (!sugg || r.status === "queued") return;
+        const info = r.status === "submitted" ? { brandSlug: brandSlugFromDomain(domain), mintedAddress: r.address } : undefined;
+        reports.push(client.reportSuggestionOutcome(sugg.id, r.status, info));
+      },
+    });
+    await Promise.all(reports);
+
+    process.stdout.write(
+      [
+        "",
+        `pass complete: attempted=${result.attempted} errored=${result.errored}`,
+        `  submitted=${result.byStatus.submitted} needs_solver=${result.byStatus.needs_solver}` +
+          ` no_form_found=${result.byStatus.no_form_found} needs_attention=${result.byStatus.needs_attention}`,
+        "",
+      ].join("\n"),
+    );
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
+/**
  * A5 `agent maintain` — the steady-state trickle: release lapsed leases,
  * re-queue parked rows, reconcile confirmations, then drain a small budget under
  * the throttle. Manual/cron operator action; drives a real browser + archive.
@@ -501,6 +604,8 @@ export function run(argv: string[]): number | Promise<number> {
       return cmdDoctor();
     case "burst":
       return cmdBurst(rest);
+    case "subscribe:suggestions":
+      return cmdSubscribeSuggestions(rest);
     case "maintain":
       return cmdMaintain(rest);
     case undefined:

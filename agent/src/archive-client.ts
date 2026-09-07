@@ -79,6 +79,15 @@ export interface FleetRunReport {
   by_esp: Array<{ esp: string; submitted: number; confirmed: number }>;
 }
 
+/** A row from the public Suggest-a-brand queue, GET /internal/suggestions?status=new. */
+export interface SuggestionResponse {
+  id: number;
+  domain: string;
+  brand_slug: string | null;
+  note: string | null;
+  created_at: string;
+}
+
 export type FetchLike = typeof fetch;
 
 export class ArchiveError extends Error {
@@ -124,6 +133,69 @@ export class ArchiveClient {
       body: JSON.stringify(persona ? { brand, persona } : { brand }),
     });
     return this.json<AddressResponse>(res, "mintAddress", [201]);
+  }
+
+  /**
+   * POST /internal/addresses/:id/outcome — what actually happened on the signup form.
+   *
+   * The archive only ever learns that an address was minted and that nothing arrived on it. Those
+   * are two different failures with two different fixes — a bot wall to back off from, a form our
+   * finder could not read, a submit that was silently dropped — and until this call they were
+   * indistinguishable in D1. BEST-EFFORT, like reportFleetRun: the run's value is the subscribes.
+   * Also swallows the 404 an archive that predates the endpoint returns, so an older deployment
+   * degrades to the status quo instead of failing every attempt.
+   */
+  async reportOutcome(addressId: number, outcome: string, reason: string): Promise<void> {
+    try {
+      await this.fetchImpl(`${this.baseUrl}/internal/addresses/${addressId}/outcome`, {
+        method: "POST",
+        headers: this.authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ outcome, reason }),
+      });
+    } catch {
+      /* best-effort: never turn a completed subscribe into a failed run */
+    }
+  }
+
+  /**
+   * GET /internal/suggestions?status=new → the public Suggest-a-brand queue — the auto-subscribe
+   * agent's OWN seed list, distinct from seed/*.csv. Defensive like subscribedSlugs: an empty
+   * array on any failure (incl. an older archive without the endpoint), so a scheduled run
+   * against a stale archive does nothing instead of crashing the job.
+   */
+  async fetchSuggestions(status = "new"): Promise<SuggestionResponse[]> {
+    try {
+      const res = await this.fetchImpl(
+        `${this.baseUrl}/internal/suggestions?status=${encodeURIComponent(status)}`,
+        { method: "GET", headers: this.authHeaders() },
+      );
+      if (res.status !== 200) return [];
+      const body = (await res.json()) as { suggestions?: SuggestionResponse[] };
+      return body.suggestions ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * POST /internal/suggestions/:id/agent-outcome — the suggestion queue's counterpart to
+   * reportOutcome above. A 'submitted' outcome needs `brandSlug` + `mintedAddress`: the archive
+   * uses them to claim the suggestion exactly the way a human's "Claim & mint" button does, so
+   * a successful auto-subscribe needs no separate action from a mod. BEST-EFFORT, same reasoning
+   * as reportOutcome.
+   */
+  async reportSuggestionOutcome(
+    suggestionId: number, outcome: string, info?: { brandSlug?: string; mintedAddress?: string },
+  ): Promise<void> {
+    try {
+      await this.fetchImpl(`${this.baseUrl}/internal/suggestions/${suggestionId}/agent-outcome`, {
+        method: "POST",
+        headers: this.authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ outcome, brand_slug: info?.brandSlug, minted_address: info?.mintedAddress }),
+      });
+    } catch {
+      /* best-effort: never turn a completed subscribe into a failed run */
+    }
   }
 
   /**

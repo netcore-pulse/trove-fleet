@@ -1,0 +1,81 @@
+name: subscribe-suggestions
+
+# Auto-subscribe the PUBLIC Suggest-a-brand queue — a different list from subscribe.yml's
+# seed/*.csv. Suggestions trickle in one at a time, so this is MEANT to run small and often on
+# a schedule rather than as a big manual dispatch: `agent subscribe:suggestions` fetches whatever
+# the archive has marked status=new (GET /internal/suggestions), attempts each through the same
+# subscribe step subscribe.yml uses, and reports each outcome back to its OWN suggestion row —
+# a submit claims it the same way a human's "Claim & mint" button on /admin/coverage does.
+# See docs/AUTO-SUBSCRIBE-SUGGESTIONS-PLAN.md in the trove repo.
+#
+# One shard, not eight: there is rarely more than a handful of `new` suggestions at once, so the
+# sharded-egress-IP machinery subscribe.yml needs for a few-thousand-row seed file is overkill
+# here.
+#
+# DISPATCH-ONLY FOR NOW — no `schedule:` trigger yet, deliberately, matching this repo's own
+# convention for a workflow that takes real outward-facing action (see classify.yml and
+# grok-subscribe-tail.yml, both manual-only with the same reasoning in their own header
+# comments): this exact code path (the real agent actually finding + filling + submitting a
+# real signup form via this new command) has never run for real anywhere, only simulated via
+# the outcome API. TROVE_ARCHIVE_URL for this repo points at PRODUCTION
+# (trove-archive.muddy-grass-aeb0.workers.dev) — so the first runs should be triggered and
+# watched by a human, not left to an hourly cron. Add the `schedule:` block back once a few
+# manually-triggered runs have been watched end to end and behave as expected.
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Max suggestions to attempt this run"
+        default: "10"
+
+permissions:
+  contents: read
+
+jobs:
+  subscribe:
+    runs-on: ubuntu-latest
+    env:
+      TROVE_ARCHIVE_URL: ${{ vars.TROVE_ARCHIVE_URL }}
+      TROVE_INTERNAL_API_TOKEN: ${{ secrets.TROVE_INTERNAL_API_TOKEN }}
+      TROVE_WORKER_ID: gha-suggestions-${{ github.run_id }}
+      TROVE_POPUP_SETTLE_MS: "1200"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - run: npm ci
+        working-directory: agent
+      - run: npx playwright install --with-deps chromium
+        working-directory: agent
+      - name: Subscribe the new-suggestions queue
+        working-directory: agent
+        run: node --experimental-strip-types src/cli/index.ts subscribe:suggestions --limit ${{ github.event.inputs.limit || '10' }}
+
+  confirm:
+    needs: subscribe
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    env:
+      TROVE_ARCHIVE_URL: ${{ vars.TROVE_ARCHIVE_URL }}
+      TROVE_INTERNAL_API_TOKEN: ${{ secrets.TROVE_INTERNAL_API_TOKEN }}
+      # Drive confirm links in a real browser — many double-opt-in links need JS/cookies
+      # to register; the plain-GET clicker missed them. Same as subscribe.yml's confirm job:
+      # a successful auto-subscribe here still needs its double-opt-in click closed.
+      TROVE_CONFIRM_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - run: npm ci
+        working-directory: agent
+      - run: npx playwright install --with-deps chromium
+        working-directory: agent
+      - name: Click double-opt-in confirm links (browser)
+        working-directory: agent
+        run: node --experimental-strip-types src/cli/index.ts confirm
