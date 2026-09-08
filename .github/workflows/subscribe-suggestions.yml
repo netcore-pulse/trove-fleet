@@ -12,21 +12,20 @@ name: subscribe-suggestions
 # sharded-egress-IP machinery subscribe.yml needs for a few-thousand-row seed file is overkill
 # here.
 #
-# DISPATCH-ONLY FOR NOW — no `schedule:` trigger yet, deliberately, matching this repo's own
-# convention for a workflow that takes real outward-facing action (see classify.yml and
-# grok-subscribe-tail.yml, both manual-only with the same reasoning in their own header
-# comments): this exact code path (the real agent actually finding + filling + submitting a
-# real signup form via this new command) has never run for real anywhere, only simulated via
-# the outcome API. TROVE_ARCHIVE_URL for this repo points at PRODUCTION
-# (trove-archive.muddy-grass-aeb0.workers.dev) — so the first runs should be triggered and
-# watched by a human, not left to an hourly cron. Add the `schedule:` block back once a few
-# manually-triggered runs have been watched end to end and behave as expected.
+# Started dispatch-only (see git history) — two manually-triggered, watched runs against
+# PRODUCTION (trove-archive.muddy-grass-aeb0.workers.dev) behaved correctly (no crashes, sensible
+# no_form_found/needs_solver/needs_attention verdicts, one address genuinely minted and awaiting
+# confirmation) and a bug in GET /internal/suggestions that was re-serving already-failed rows
+# forever is now fixed — so the schedule is back on. `workflow_dispatch` stays too for on-demand
+# runs / a different limit.
 on:
+  schedule:
+    - cron: "17 * * * *" # hourly, minute 17 to avoid the top-of-hour GHA scheduler crunch
   workflow_dispatch:
     inputs:
       limit:
         description: "Max suggestions to attempt this run"
-        default: "10"
+        default: "20"
 
 permissions:
   contents: read
@@ -52,7 +51,7 @@ jobs:
         working-directory: agent
       - name: Subscribe the new-suggestions queue
         working-directory: agent
-        run: node --experimental-strip-types src/cli/index.ts subscribe:suggestions --limit ${{ github.event.inputs.limit || '10' }}
+        run: node --experimental-strip-types src/cli/index.ts subscribe:suggestions --limit ${{ github.event.inputs.limit || '20' }}
 
   confirm:
     needs: subscribe
