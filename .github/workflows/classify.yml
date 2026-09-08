@@ -1,0 +1,101 @@
+name: classify
+
+# LLM classification pass over the archive — brand verticals, campaign type / tone / narrative
+# (plan 3.2, Chunk Q). Runs here in Node rather than in the Worker because the Worker cannot call
+# an LLM at all (conventions.md's cron-placement rule sends model-dependent work to a GitHub
+# Action, the same reason precompute-embeddings.yml lives here).
+#
+# Manual-only (workflow_dispatch): it spends money on the DeepSeek API and writes labels that gate
+# customer-facing surfaces, so it never fires on a schedule. You trigger it deliberately, watch the
+# log, and check the coverage numbers and the estimated spend it prints.
+#
+# WHY IT LIVES IN THIS (public) REPO, not netcore-pulse/trove:
+#   trove is a PRIVATE repo on the org's Free plan → GitHub Actions is capped at 2,000 min/month.
+#   Public repos get UNLIMITED free Actions minutes, so the pass runs here for free and leaves
+#   trove's quota for CI. The runner (scripts/classify.mjs + scripts/deepseek.mjs) is mirrored from
+#   trove/cf-archive/scripts and holds NO classification logic: the taxonomy, the system prompt and
+#   the JSON schema are defined once in cf-archive/src/classification.ts and SERVED BY THE WORKER in
+#   the queue response, so nothing proprietary lives in this repo.
+#
+# Prerequisites (one-time):
+#   - repo secret  DEEPSEEK_API_KEY          (add in this repo's Settings → Secrets and variables)
+#   - repo secret  TROVE_INTERNAL_API_TOKEN  (already set — subscribe.yml + precompute-embeddings use it)
+#   - repo var     TROVE_ARCHIVE_URL         (optional; defaults to https://trove.livingemails.com)
+#   - POST /internal/migrate against prod once so the classification columns exist (done 2026-07-30).
+#
+# On the API key: read from the GitHub secret straight into the step env and sent to the DeepSeek
+# API by scripts/classify.mjs as an Authorization: Bearer header. It is never written to a file,
+# echoed, or put in a URL. workflow_dispatch runs only on the default branch and never from forks,
+# so the secrets are not exposed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: 'What to classify'
+        required: true
+        default: 'brands'
+        type: choice
+        options: [brands, emails, both]
+      limit:
+        description: 'Rows per queue page'
+        required: false
+        default: '200'
+      rounds:
+        description: 'Max queue pages this run (a cost ceiling — raise it deliberately)'
+        required: false
+        default: '5'
+      model:
+        description: 'DeepSeek model id (verified against GET /v1/models before any pack is sent)'
+        required: false
+        default: 'deepseek-v4-flash'
+        type: choice
+        options: [deepseek-v4-flash, deepseek-v4-pro]
+      concurrency:
+        description: 'Packs in flight (each pack is ~20 rows — this is the blast radius, not a rate limit)'
+        required: false
+        default: '6'
+      attempts:
+        description: 'Attempts per pack before its rows are left in the queue for the next run'
+        required: false
+        default: '4'
+      dry_run:
+        description: 'Drain the queue and print what would be sent, without calling the model'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: classify
+  cancel-in-progress: false
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      TROVE_INTERNAL_API_TOKEN: ${{ secrets.TROVE_INTERNAL_API_TOKEN }}
+      ARCHIVE_URL: ${{ vars.TROVE_ARCHIVE_URL || 'https://trove.livingemails.com' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      # No npm install: scripts/classify.mjs + scripts/deepseek.mjs have ZERO dependencies (DeepSeek
+      # is OpenAI-compatible, so plain fetch against two endpoints is the whole client).
+      - name: Run the classification pass
+        run: |
+          node scripts/classify.mjs \
+            --kind "${{ inputs.kind }}" \
+            --limit "${{ inputs.limit }}" \
+            --rounds "${{ inputs.rounds }}" \
+            --model "${{ inputs.model }}" \
+            --concurrency "${{ inputs.concurrency }}" \
+            --attempts "${{ inputs.attempts }}" \
+            ${{ inputs.dry_run == 'true' && '--dry-run' || '' }}
